@@ -348,6 +348,93 @@ func reportFailures(output io.Writer, verbose bool, results []*Result) {
 	_ = PrettyReporter{Output: output, Verbose: verbose}.Report(ch)
 }
 
+// LCOVCoverageReporter reports coverage in LCOV info format.
+type LCOVCoverageReporter struct {
+	Cover     *cover.Cover
+	Modules   map[string]*ast.Module
+	Output    io.Writer
+	Threshold float64
+	Verbose   bool
+}
+
+// Report prints the coverage report in LCOV info format. If any tests fail or
+// encounter errors, this function returns an error.
+func (r LCOVCoverageReporter) Report(ch chan *Result) error {
+	var failures []*Result
+	for tr := range ch {
+		if tr.Error != nil {
+			return tr.Error
+		}
+		if tr.Fail {
+			failures = append(failures, tr)
+		}
+	}
+
+	if len(failures) > 0 {
+		reportFailures(r.Output, r.Verbose, failures)
+		return errors.New(failures[0].String())
+	}
+
+	report := r.Cover.Report(r.Modules)
+
+	if report.Coverage < r.Threshold {
+		err := cover.CoverageThresholdError{
+			Coverage:  report.Coverage,
+			Threshold: r.Threshold,
+		}
+
+		if r.Verbose {
+			err.Report = &report
+		}
+
+		return &err
+	}
+
+	files := make([]string, 0, len(report.Files))
+	for f := range report.Files {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+
+	for _, file := range files {
+		fr := report.Files[file]
+
+		var linesHit, instrumentedLines int
+
+		fmt.Fprintln(r.Output, "TN:")
+		fmt.Fprintf(r.Output, "SF:%s\n", file)
+
+		seen := make(map[int]bool)
+
+		for _, rng := range fr.Covered {
+			for row := rng.Start.Row; row <= rng.End.Row; row++ {
+				if !seen[row] {
+					fmt.Fprintf(r.Output, "DA:%d,1\n", row)
+					linesHit++
+					instrumentedLines++
+					seen[row] = true
+				}
+			}
+		}
+
+		for _, rng := range fr.NotCovered {
+			for row := rng.Start.Row; row <= rng.End.Row; row++ {
+				if !seen[row] {
+					fmt.Fprintf(r.Output, "DA:%d,0\n", row)
+					instrumentedLines++
+					seen[row] = true
+				}
+			}
+		}
+
+		fmt.Fprintf(r.Output, "LH:%d\n", linesHit)
+		fmt.Fprintf(r.Output, "LF:%d\n", instrumentedLines)
+		fmt.Fprintln(r.Output, "end_of_record")
+	}
+
+	return nil
+}
+
 type indentingWriter struct {
 	w      io.Writer
 	indent int

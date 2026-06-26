@@ -19,3 +19,6 @@ type JSONReporter = v1.JSONReporter
 
 // JSONCoverageReporter reports coverage as a JSON structure.
 type JSONCoverageReporter = v1.JSONCoverageReporter
+
+// LCOVCoverageReporter reports coverage in LCOV info format.
+type LCOVCoverageReporter = v1.LCOVCoverageReporter

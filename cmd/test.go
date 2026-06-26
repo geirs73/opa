@@ -39,47 +39,49 @@ import (
 )
 
 type testCommandParams struct {
-	verbose      bool
-	explain      *util.EnumFlag
-	errLimit     int
-	outputFormat *util.EnumFlag
-	coverage     bool
-	threshold    float64
-	timeout      time.Duration
-	ignore       []string
-	bundleMode   bool
-	benchmark    bool
-	benchMem     bool
-	runRegex     string
-	sortTests    *util.EnumFlag
-	count        int
-	target       *util.EnumFlag
-	skipExitZero bool
-	capabilities *capabilitiesFlag
-	schema       *schemaFlags
-	watch        bool
-	stopChan     chan os.Signal
-	output       io.Writer
-	errOutput    io.Writer
-	v0Compatible bool
-	v1Compatible bool
-	varValues    bool
-	parallel     int
-	failOnEmpty  bool
+	verbose        bool
+	explain        *util.EnumFlag
+	errLimit       int
+	outputFormat   *util.EnumFlag
+	coverage       bool
+	coverageFormat *util.EnumFlag
+	threshold      float64
+	timeout        time.Duration
+	ignore         []string
+	bundleMode     bool
+	benchmark      bool
+	benchMem       bool
+	runRegex       string
+	sortTests      *util.EnumFlag
+	count          int
+	target         *util.EnumFlag
+	skipExitZero   bool
+	capabilities   *capabilitiesFlag
+	schema         *schemaFlags
+	watch          bool
+	stopChan       chan os.Signal
+	output         io.Writer
+	errOutput      io.Writer
+	v0Compatible   bool
+	v1Compatible   bool
+	varValues      bool
+	parallel       int
+	failOnEmpty    bool
 }
 
 func newTestCommandParams() testCommandParams {
 	return testCommandParams{
-		sortTests:    formats.Flag(formats.SortNone, formats.SortDuration),
-		outputFormat: formats.Flag(formats.Pretty, formats.JSON, formats.GoBench),
-		explain:      newExplainFlag([]string{explainModeFails, explainModeFull, explainModeNotes, explainModeDebug}),
-		target:       util.NewEnumFlag(compile.TargetRego, []string{compile.TargetRego, compile.TargetWasm}),
-		capabilities: newCapabilitiesFlag(),
-		schema:       &schemaFlags{},
-		output:       os.Stdout,
-		errOutput:    os.Stderr,
-		stopChan:     make(chan os.Signal, 1),
-		parallel:     goRuntime.NumCPU(),
+		sortTests:      formats.Flag(formats.SortNone, formats.SortDuration),
+		outputFormat:   formats.Flag(formats.Pretty, formats.JSON, formats.GoBench),
+		coverageFormat: formats.Flag(formats.JSON, formats.LCOV),
+		explain:        newExplainFlag([]string{explainModeFails, explainModeFull, explainModeNotes, explainModeDebug}),
+		target:         util.NewEnumFlag(compile.TargetRego, []string{compile.TargetRego, compile.TargetWasm}),
+		capabilities:   newCapabilitiesFlag(),
+		schema:         &schemaFlags{},
+		output:         os.Stdout,
+		errOutput:      os.Stderr,
+		stopChan:       make(chan os.Signal, 1),
+		parallel:       goRuntime.NumCPU(),
 	}
 }
 
@@ -465,12 +467,23 @@ func compileAndSetupTests(ctx context.Context, testParams testCommandParams, sto
 			}
 		}
 	} else {
-		reporter = tester.JSONCoverageReporter{
-			Cover:     cov,
-			Modules:   modules,
-			Output:    testParams.output,
-			Threshold: testParams.threshold,
-			Verbose:   testParams.verbose,
+		switch testParams.coverageFormat.String() {
+		case formats.LCOV:
+			reporter = tester.LCOVCoverageReporter{
+				Cover:     cov,
+				Modules:   modules,
+				Output:    testParams.output,
+				Threshold: testParams.threshold,
+				Verbose:   testParams.verbose,
+			}
+		default:
+			reporter = tester.JSONCoverageReporter{
+				Cover:     cov,
+				Modules:   modules,
+				Output:    testParams.output,
+				Threshold: testParams.threshold,
+				Verbose:   testParams.verbose,
+			}
 		}
 	}
 
@@ -585,6 +598,7 @@ recommended as some updates might cause them to be dropped by OPA.
 	testCommand.Flags().DurationVar(&testParams.timeout, "timeout", 0, "set test timeout (default 5s, 30s when benchmarking)")
 	testCommand.Flags().BoolVarP(&testParams.coverage, "coverage", "c", false, "report coverage (overrides debug tracing)")
 	testCommand.Flags().Float64VarP(&testParams.threshold, "threshold", "", 0, "set coverage threshold and exit with non-zero status if coverage is less than threshold %")
+	testCommand.Flags().Var(testParams.coverageFormat, "coverage-format", "set coverage report format (json, lcov)")
 	testCommand.Flags().BoolVar(&testParams.benchmark, "bench", false, "benchmark the unit tests")
 	testCommand.Flags().StringVarP(&testParams.runRegex, "run", "r", "", "run only test cases matching the regular expression")
 	testCommand.Flags().BoolVarP(&testParams.watch, "watch", "w", false, "watch command line files for changes")

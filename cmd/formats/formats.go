@@ -19,6 +19,7 @@ const (
 	Source       option = "source"
 	Raw          option = "raw"
 	Discard      option = "discard"
+	LCOV         option = "lcov"
 	SortNone     option = "none"
 	SortDuration option = "duration"
 )

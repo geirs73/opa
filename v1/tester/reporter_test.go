@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/open-policy-agent/opa/v1/ast"
+	"github.com/open-policy-agent/opa/v1/cover"
 	"github.com/open-policy-agent/opa/v1/topdown"
 	"github.com/open-policy-agent/opa/v1/util"
 )
@@ -1370,4 +1371,156 @@ func resultsChan(ts []*Result) chan *Result {
 		close(ch)
 	}()
 	return ch
+}
+
+func TestLCOVCoverageReporter(t *testing.T) {
+	module := `package test
+
+p if {
+	true
+}
+
+q if {
+	false
+}
+`
+	parsedModule, err := ast.ParseModuleWithOpts("test.rego", module, ast.ParserOptions{AllFutureKeywords: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cov := cover.New()
+	modules := map[string]*ast.Module{"test.rego": parsedModule}
+
+	// Simulate coverage: trace the head + body of rule p (lines 3,4) as covered
+	cov.TraceEvent(topdown.Event{
+		Op:   topdown.ExitOp,
+		Node: parsedModule.Rules[0], // p
+	})
+	cov.TraceEvent(topdown.Event{
+		Op:   topdown.EvalOp,
+		Node: parsedModule.Rules[0].Body[0], // true
+	})
+
+	ch := make(chan *Result, 1)
+	ch <- &Result{Package: "data.test", Name: "test_p"}
+	close(ch)
+
+	var buf bytes.Buffer
+	r := LCOVCoverageReporter{
+		Cover:   cov,
+		Modules: modules,
+		Output:  &buf,
+	}
+
+	err = r.Report(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := buf.String()
+
+	// Verify LCOV structure
+	if !strings.Contains(output, "TN:") {
+		t.Error("Expected TN: in output")
+	}
+	if !strings.Contains(output, "SF:test.rego") {
+		t.Error("Expected SF:test.rego in output")
+	}
+	if !strings.Contains(output, "end_of_record") {
+		t.Error("Expected end_of_record in output")
+	}
+	// Rule p head (line 3) and body (line 4) should be covered
+	if !strings.Contains(output, "DA:3,1") {
+		t.Error("Expected DA:3,1 (covered line) in output")
+	}
+	if !strings.Contains(output, "DA:4,1") {
+		t.Error("Expected DA:4,1 (covered line) in output")
+	}
+	// Rule q head (line 7) and body (line 8) should not be covered
+	if !strings.Contains(output, "DA:7,0") {
+		t.Error("Expected DA:7,0 (not covered line) in output")
+	}
+	if !strings.Contains(output, "DA:8,0") {
+		t.Error("Expected DA:8,0 (not covered line) in output")
+	}
+	// LH should be > 0, LF should be > LH
+	if !strings.Contains(output, "LH:") {
+		t.Error("Expected LH: in output")
+	}
+	if !strings.Contains(output, "LF:") {
+		t.Error("Expected LF: in output")
+	}
+}
+
+func TestLCOVCoverageReporterWithFailures(t *testing.T) {
+	cov := cover.New()
+	modules := map[string]*ast.Module{}
+
+	ch := make(chan *Result, 1)
+	ch <- &Result{Package: "data.test", Name: "test_fail", Fail: true}
+	close(ch)
+
+	var buf bytes.Buffer
+	r := LCOVCoverageReporter{
+		Cover:   cov,
+		Modules: modules,
+		Output:  &buf,
+	}
+
+	err := r.Report(ch)
+	if err == nil {
+		t.Fatal("Expected error for failed tests")
+	}
+}
+
+func TestLCOVCoverageReporterThreshold(t *testing.T) {
+	module := `package test
+
+p if {
+	true
+}
+
+q if {
+	false
+}
+`
+	parsedModule, err := ast.ParseModuleWithOpts("test.rego", module, ast.ParserOptions{AllFutureKeywords: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cov := cover.New()
+	modules := map[string]*ast.Module{"test.rego": parsedModule}
+
+	// Only cover rule p, not q — coverage will be < 100%
+	cov.TraceEvent(topdown.Event{
+		Op:   topdown.ExitOp,
+		Node: parsedModule.Rules[0],
+	})
+	cov.TraceEvent(topdown.Event{
+		Op:   topdown.EvalOp,
+		Node: parsedModule.Rules[0].Body[0],
+	})
+
+	ch := make(chan *Result, 1)
+	ch <- &Result{Package: "data.test", Name: "test_p"}
+	close(ch)
+
+	var buf bytes.Buffer
+	r := LCOVCoverageReporter{
+		Cover:     cov,
+		Modules:   modules,
+		Output:    &buf,
+		Threshold: 100,
+	}
+
+	err = r.Report(ch)
+	if err == nil {
+		t.Fatal("Expected threshold error")
+	}
+	var thresholdErr *cover.CoverageThresholdError
+	if !errors.As(err, &thresholdErr) {
+		t.Fatalf("Expected CoverageThresholdError, got: %v", err)
+	}
 }
