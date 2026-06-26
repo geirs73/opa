@@ -684,6 +684,37 @@ opa test --coverage --format=json example.rego example_test.rego
 }
 ```
 
+### LCOV format
+
+The coverage report can also be emitted in the
+[LCOV](https://github.com/linux-test-project/lcov) `info` format, which is
+understood by many coverage tooling and CI integrations (for example `genhtml`
+or code coverage services). Use the `--coverage-format` flag to select it:
+
+```bash
+opa test --coverage --coverage-format=lcov example.rego example_test.rego
+```
+
+```text title="output"
+TN:
+SF:example.rego
+DA:3,1
+DA:4,1
+DA:5,1
+DA:8,0
+DA:9,1
+DA:10,1
+DA:11,1
+LH:6
+LF:7
+end_of_record
+...
+```
+
+The `--coverage-format` flag accepts `json` (the default) and `lcov`. It only
+takes effect when coverage reporting is enabled with `--coverage` (or
+`--threshold`).
+
 ## Ecosystem Projects
 
 <EcosystemEmbed feature="policy-testing">

@@ -1444,12 +1444,114 @@ q if {
 	if !strings.Contains(output, "DA:8,0") {
 		t.Error("Expected DA:8,0 (not covered line) in output")
 	}
-	// LH should be > 0, LF should be > LH
-	if !strings.Contains(output, "LH:") {
-		t.Error("Expected LH: in output")
+
+	// Function-level records are intentionally omitted; assert they are absent
+	// so we don't regress to emitting malformed FN/FNDA entries.
+	for _, prefix := range []string{"FN:", "FNDA:", "FNF:", "FNH:"} {
+		if strings.Contains(output, prefix) {
+			t.Errorf("Did not expect %s record in output:\n%s", prefix, output)
+		}
 	}
-	if !strings.Contains(output, "LF:") {
-		t.Error("Expected LF: in output")
+
+	// Each instrumented line must be reported exactly once (guards the
+	// de-duplication of overlapping ranges).
+	daCounts := map[string]int{}
+	var hit, found int
+	var gotLH, gotLF int
+	haveLH, haveLF := false, false
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		switch {
+		case strings.HasPrefix(line, "DA:"):
+			daCounts[line]++
+			found++
+			if strings.HasSuffix(line, ",1") {
+				hit++
+			}
+		case strings.HasPrefix(line, "LH:"):
+			haveLH = true
+			n, perr := strconv.Atoi(strings.TrimPrefix(line, "LH:"))
+			if perr != nil {
+				t.Fatalf("failed to parse %q: %v", line, perr)
+			}
+			gotLH = n
+		case strings.HasPrefix(line, "LF:"):
+			haveLF = true
+			n, perr := strconv.Atoi(strings.TrimPrefix(line, "LF:"))
+			if perr != nil {
+				t.Fatalf("failed to parse %q: %v", line, perr)
+			}
+			gotLF = n
+		}
+	}
+
+	for da, n := range daCounts {
+		if n != 1 {
+			t.Errorf("expected %q to appear once, appeared %d times", da, n)
+		}
+	}
+
+	if !haveLH || !haveLF {
+		t.Fatal("Expected both LH: and LF: in output")
+	}
+	if gotLH != hit {
+		t.Errorf("LH mismatch: header reports %d, counted %d covered DA lines", gotLH, hit)
+	}
+	if gotLF != found {
+		t.Errorf("LF mismatch: header reports %d, counted %d DA lines", gotLF, found)
+	}
+	if gotLH == 0 {
+		t.Error("expected at least one covered line (LH > 0)")
+	}
+	if gotLF <= gotLH {
+		t.Errorf("expected LF (%d) > LH (%d) since rule q is uncovered", gotLF, gotLH)
+	}
+}
+
+func TestLCOVCoverageReporterDeduplicatesOverlappingRanges(t *testing.T) {
+	// A rule whose head and body span lines so that the coverage report can
+	// contain ranges that touch the same row. The reporter must emit each
+	// instrumented line only once.
+	module := `package test
+
+allow if {
+	input.x == 1
+	input.y == 2
+}
+`
+	parsedModule, err := ast.ParseModuleWithOpts("test.rego", module, ast.ParserOptions{AllFutureKeywords: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cov := cover.New()
+	modules := map[string]*ast.Module{"test.rego": parsedModule}
+
+	// Trace the rule and every expression in its body as covered.
+	cov.TraceEvent(topdown.Event{Op: topdown.ExitOp, Node: parsedModule.Rules[0]})
+	for _, expr := range parsedModule.Rules[0].Body {
+		cov.TraceEvent(topdown.Event{Op: topdown.EvalOp, Node: expr})
+	}
+
+	ch := make(chan *Result, 1)
+	ch <- &Result{Package: "data.test", Name: "test_allow"}
+	close(ch)
+
+	var buf bytes.Buffer
+	r := LCOVCoverageReporter{Cover: cov, Modules: modules, Output: &buf}
+	if err := r.Report(ch); err != nil {
+		t.Fatal(err)
+	}
+
+	daCounts := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.HasPrefix(line, "DA:") {
+			daCounts[line]++
+		}
+	}
+	for da, n := range daCounts {
+		if n != 1 {
+			t.Errorf("expected %q to appear once, appeared %d times:\n%s", da, n, buf.String())
+		}
 	}
 }
 

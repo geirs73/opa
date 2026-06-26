@@ -577,6 +577,10 @@ recommended as some updates might cause them to be dropped by OPA.
 				testParams.verbose = true
 			}
 
+			if cmd.Flags().Changed("coverage-format") && !testParams.coverage && testParams.threshold == 0 {
+				return errors.New("the --coverage-format flag requires coverage reporting to be enabled with --coverage")
+			}
+
 			return env.CmdFlags.CheckEnvironmentVariables(cmd)
 		},
 

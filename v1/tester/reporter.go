@@ -304,10 +304,25 @@ type JSONCoverageReporter struct {
 // Report prints the test report to the reporter's output. If any tests fail or
 // encounter errors, this function returns an error.
 func (r JSONCoverageReporter) Report(ch chan *Result) error {
+	report, err := collectCoverageReport(ch, r.Cover, r.Modules, r.Threshold, r.Verbose, r.Output)
+	if err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(r.Output)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(report)
+}
+
+// collectCoverageReport drains the result channel, reporting any test failures
+// to output. It returns the coverage report produced from the given coverage
+// data and modules. An error is returned if any test errored or failed, or if
+// the resulting coverage is below threshold.
+func collectCoverageReport(ch chan *Result, c *cover.Cover, modules map[string]*ast.Module, threshold float64, verbose bool, output io.Writer) (*cover.Report, error) {
 	var failures []*Result
 	for tr := range ch {
 		if tr.Error != nil {
-			return tr.Error
+			return nil, tr.Error
 		}
 		if tr.Fail {
 			failures = append(failures, tr)
@@ -315,28 +330,26 @@ func (r JSONCoverageReporter) Report(ch chan *Result) error {
 	}
 
 	if len(failures) > 0 {
-		reportFailures(r.Output, r.Verbose, failures)
-		return errors.New(failures[0].String())
+		reportFailures(output, verbose, failures)
+		return nil, errors.New(failures[0].String())
 	}
 
-	report := r.Cover.Report(r.Modules)
+	report := c.Report(modules)
 
-	if report.Coverage < r.Threshold {
+	if report.Coverage < threshold {
 		err := cover.CoverageThresholdError{
 			Coverage:  report.Coverage,
-			Threshold: r.Threshold,
+			Threshold: threshold,
 		}
 
-		if r.Verbose {
+		if verbose {
 			err.Report = &report
 		}
 
-		return &err
+		return nil, &err
 	}
 
-	encoder := json.NewEncoder(r.Output)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(report)
+	return &report, nil
 }
 
 func reportFailures(output io.Writer, verbose bool, results []*Result) {
@@ -360,34 +373,9 @@ type LCOVCoverageReporter struct {
 // Report prints the coverage report in LCOV info format. If any tests fail or
 // encounter errors, this function returns an error.
 func (r LCOVCoverageReporter) Report(ch chan *Result) error {
-	var failures []*Result
-	for tr := range ch {
-		if tr.Error != nil {
-			return tr.Error
-		}
-		if tr.Fail {
-			failures = append(failures, tr)
-		}
-	}
-
-	if len(failures) > 0 {
-		reportFailures(r.Output, r.Verbose, failures)
-		return errors.New(failures[0].String())
-	}
-
-	report := r.Cover.Report(r.Modules)
-
-	if report.Coverage < r.Threshold {
-		err := cover.CoverageThresholdError{
-			Coverage:  report.Coverage,
-			Threshold: r.Threshold,
-		}
-
-		if r.Verbose {
-			err.Report = &report
-		}
-
-		return &err
+	report, err := collectCoverageReport(ch, r.Cover, r.Modules, r.Threshold, r.Verbose, r.Output)
+	if err != nil {
+		return err
 	}
 
 	files := make([]string, 0, len(report.Files))
